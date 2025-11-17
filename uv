@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Project-local wrapper for `uv`.
+# Prefers a project virtualenv ('.venv' or 'venv') and falls back to system `uv`.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+BIN_CANDIDATES=(
+  "$REPO_ROOT/.venv/bin/uv"
+  "$REPO_ROOT/venv/bin/uv"
+  "$REPO_ROOT/env/bin/uv"
+)
+
+PY_CANDIDATES=(
+  "$REPO_ROOT/.venv/bin/python"
+  "$REPO_ROOT/venv/bin/python"
+  "$REPO_ROOT/env/bin/python"
+)
+
+# Try local uv binaries first
+for bin in "${BIN_CANDIDATES[@]}"; do
+  if [[ -x "$bin" ]]; then
+    exec "$bin" "$@"
+  fi
+done
+
+# Try running `python -m uv` with a local python
+for py in "${PY_CANDIDATES[@]}"; do
+  if [[ -x "$py" ]]; then
+    # Check whether the 'uv' module is importable in that python
+    if "$py" -c "import importlib,sys
+try:
+    importlib.import_module('uv')
+except Exception:
+    sys.exit(1)
+" >/dev/null 2>&1; then
+      exec "$py" -m uv "$@"
+    else
+      # Not installed in this python; skip to next candidate
+      continue
+    fi
+  fi
+done
+
+# Fall back to system uv if it exists and isn't this script
+if sys_uv="$(command -v uv 2>/dev/null || true)"; then
+  # Avoid exec-ing this wrapper again
+  if [[ -n "$sys_uv" && "$sys_uv" != "$REPO_ROOT/uv" ]]; then
+    exec "$sys_uv" "$@"
+  fi
+fi
+
+echo "error: no local or system 'uv' executable found" >&2
+exit 127
